@@ -86,6 +86,7 @@ Rules alone may miss gradual correlated degradation. ML alone is not appropriate
 | `scripts/validate_scenarios.py` | Scenario validation summary |
 | `tests/` | Regression tests for simulator, rules, detector, and explanations |
 | `docs/` | Architecture and implementation notes |
+| `llm/` | Optional RefuelGuard-LM research extension for fine-tuned telemetry explanations |
 
 ## How To Run
 
@@ -144,6 +145,80 @@ Expected validation story:
 - `unstable_slosh` raises ML scores through coupled flow, pressure, and thermal behavior without necessarily crossing hard thresholds.
 
 These numbers are regression evidence for synthetic scenarios, not real-world performance estimates.
+
+## RefuelGuard-LM: Fine-Tuned Telemetry Explanation Model
+
+RefuelGuard-LM is an optional research extension under `llm/`. It uses Orbital Refueling Simulator synthetic telemetry to train a small open-source LLM adapter that explains anomaly summaries.
+
+The LLM does not replace deterministic rules or the phase-aware anomaly detector. It explains their outputs: mission phase, scenario context, rule alerts, advisory ML anomaly score, and top contributing signals.
+
+Generate instruction data:
+
+```bash
+python3 llm/data/generate_instruction_data.py --output-dir llm/data --n-examples 300 --seed 42
+```
+
+Train a LoRA adapter with a small open model:
+
+```bash
+pip install -r llm/training/requirements.txt
+python3 llm/training/train_lora.py --base-model Qwen/Qwen2.5-0.5B-Instruct
+```
+
+Evaluate base versus fine-tuned outputs:
+
+```bash
+python3 llm/evals/evaluate_base_vs_finetuned.py \
+  --adapter-path llm/training/outputs/refuelguard-lm-lora
+```
+
+This extension is synthetic-data research only. It is not flight software, not a certified diagnosis model, and not a safety decision authority.
+
+## Optional Fine-Tuned LLM Explainer
+
+The Streamlit dashboard can optionally use the fine-tuned RefuelGuard-LM adapter as an explanation mode. The architecture stays hybrid and conservative:
+
+```text
+Telemetry
+  -> deterministic rules + phase-aware ML anomaly score
+  -> structured explanation payload
+  -> deterministic explainer and/or local fine-tuned LLM explainer
+  -> Streamlit explanation text
+```
+
+The LLM does not detect anomalies, set alert severity, override deterministic rules, or replace the ML score. It only rewrites grounded fields from the simulator: phase, scenario, rule alerts, ML score, top contributing signals, signal changes, and current telemetry values.
+
+To use it locally:
+
+```bash
+pip install -r requirements.txt
+pip install -r llm/training/requirements.txt
+streamlit run app.py
+```
+
+Then choose one of the dashboard explanation modes:
+
+- `Deterministic explanation`
+- `Fine-tuned LLM explanation`
+- `Side-by-side comparison`
+
+By default the app looks for the LoRA adapter at:
+
+```text
+llm/training/outputs/refuelguard-lm-lora
+```
+
+If the adapter or model cannot be loaded, the dashboard shows a warning and falls back to deterministic explanation text instead of crashing. LLM explanations are local-only and should include uncertainty wording, synthetic-data scope, and “not flight-certified” safety language.
+
+### Streamlit Community Cloud behavior
+
+The public Community Cloud deployment should be treated as a deterministic dashboard demo. The app disables local LLM loading on Community Cloud by default because the free resource envelope is not a good fit for loading Qwen + PEFT adapters. If a viewer selects `Fine-tuned LLM explanation`, the app shows a warning and falls back to deterministic explanation text.
+
+On a larger host with local model assets, set this environment variable to opt in:
+
+```bash
+REFUELGUARD_ENABLE_LOCAL_LLM=1 streamlit run app.py
+```
 
 ## Documentation
 

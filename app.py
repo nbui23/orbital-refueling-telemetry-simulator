@@ -5,6 +5,9 @@ Run:
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -13,6 +16,15 @@ import streamlit as st
 from detector import EnsemblePhaseAwareDetector, PhaseAwareDetector
 from estimator import estimate_line_pressure
 from explainer import explain_window
+from llm.explanation import (
+    DETERMINISTIC_MODE,
+    LLM_MODE,
+    SIDE_BY_SIDE_MODE,
+    build_deterministic_explanation,
+    build_explanation_payload,
+    resolve_explanation_mode,
+)
+from llm.explanation.llm_explainer import DEFAULT_ADAPTER_PATH, LocalLLMExplainer
 from rules import alerts_to_dataframe, evaluate_rules, group_alerts
 from simulator import (
     ANOMALY_SCENARIOS,
@@ -50,6 +62,8 @@ _BG = "#0e1117"
 
 CHART_HEIGHT = 300
 SCORE_HEIGHT = 330
+LLM_ADAPTER_PATH = Path(DEFAULT_ADAPTER_PATH)
+_LOCAL_LLM_FLAG = "REFUELGUARD_ENABLE_LOCAL_LLM"
 
 
 _GLOSSARY: dict[str, dict[str, str]] = {
@@ -605,6 +619,11 @@ def _run_scenario(
     return df, scores, alerts_df, grouped_df, contribs, score_summary, estimates
 
 
+@st.cache_resource(show_spinner="Loading local fine-tuned LLM explainer...")
+def _load_llm_explainer(adapter_path: str) -> LocalLLMExplainer:
+    return LocalLLMExplainer(adapter_path=adapter_path, local_files_only=True)
+
+
 # ── Plot helpers ──────────────────────────────────────────────────────────────
 
 def _phase_bands(fig: go.Figure, df: pd.DataFrame) -> None:
@@ -1008,6 +1027,69 @@ def _render_glossary(beginner_mode: bool) -> None:
         st.dataframe(glossary_df, use_container_width=True, hide_index=True)
 
 
+def _is_streamlit_community_cloud() -> bool:
+    """Best-effort detection for Streamlit Community Cloud deployments."""
+    if os.environ.get("STREAMLIT_SHARING_MODE") or os.environ.get("STREAMLIT_CLOUD"):
+        return True
+    return str(Path.cwd()).startswith("/mount/src/")
+
+
+def _local_llm_enabled() -> bool:
+    flag = os.environ.get(_LOCAL_LLM_FLAG, "auto").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+    if flag in {"0", "false", "no", "off"}:
+        return False
+    return not _is_streamlit_community_cloud()
+
+
+def _render_llm_explanation_panel(
+    payload,
+    deterministic_text: str,
+    mode: str,
+) -> None:
+    st.markdown("#### Explanation Mode")
+    st.caption(
+        "LLM mode is optional and local. It explains structured rule, ML, and attribution outputs; "
+        "it does not replace anomaly detection."
+    )
+
+    llm_enabled = _local_llm_enabled()
+    explainer = (
+        _load_llm_explainer(str(LLM_ADAPTER_PATH))
+        if llm_enabled and LLM_ADAPTER_PATH.exists() and mode != DETERMINISTIC_MODE
+        else None
+    )
+    result = resolve_explanation_mode(
+        mode=mode,
+        payload=payload,
+        deterministic_text=deterministic_text,
+        adapter_exists=llm_enabled and LLM_ADAPTER_PATH.exists(),
+        llm_explainer=explainer,
+    )
+    if mode != DETERMINISTIC_MODE and not llm_enabled:
+        st.warning(
+            "Local LLM loading is disabled for this deployment. Showing deterministic explanation instead. "
+            f"Set `{_LOCAL_LLM_FLAG}=1` only on a host with enough memory and local model assets.",
+            icon="⚠️",
+        )
+    elif result.warning:
+        st.warning(result.warning, icon="⚠️")
+
+    if result.show_side_by_side and result.llm_text:
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Deterministic**")
+            st.info(result.deterministic_text, icon="ℹ️")
+        with right:
+            st.markdown("**Fine-tuned LLM**")
+            st.success(result.llm_text, icon="🤖")
+    elif result.llm_text:
+        st.success(result.llm_text, icon="🤖")
+    else:
+        st.info(result.deterministic_text, icon="ℹ️")
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
@@ -1030,6 +1112,18 @@ with st.sidebar:
         "Show estimator residuals",
         value=False,
         help="Optional lightweight state-estimation chart for observed vs estimated line pressure.",
+    )
+    explanation_mode = st.radio(
+        "Explanation mode",
+        [
+            DETERMINISTIC_MODE,
+            LLM_MODE,
+            SIDE_BY_SIDE_MODE,
+        ],
+        help=(
+            "Optional local LLM explanation layer. Rules and ML scores remain the source of truth; "
+            "the LLM only rewrites structured simulator outputs."
+        ),
     )
     st.markdown("---")
 
@@ -1328,6 +1422,21 @@ with tab3:
 
     with col_info:
         st.markdown("#### Explanation Summary")
+        explanation_payload = build_explanation_payload(
+            scenario=scenario,
+            df=df,
+            scores=scores,
+            grouped_alerts=grouped_df,
+            contributions=contribs,
+            nominal_seed=42,
+        )
+        deterministic_text = build_deterministic_explanation(explanation_payload)
+        _render_llm_explanation_panel(
+            explanation_payload,
+            deterministic_text,
+            explanation_mode,
+        )
+        st.markdown("---")
         if not contribs:
             st.info(
                 "No rows exceeded the anomaly threshold (0.45). "

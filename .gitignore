@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# OS/editor noise
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Local app and generated outputs
+.streamlit/secrets.toml
+outputs/
+
+# RefuelGuard-LM generated artifacts
+llm/data/train.jsonl
+llm/data/val.jsonl
+llm/data/test.jsonl
+llm/training/outputs/
+llm/evals/results.csv
+checkpoints/
+*.ckpt
+*.safetensors
+*.bin
+*.pt
+*.pth
+.cache/
+huggingface/
+wandb/
+runs/
+
+# Private presentation/prep material
+.gitignore
+DEMO_WALKTHROUGH.md
+INTERVIEW_PITCH.md
+docs/
+docs/12_interview_study_guide.md
+
+# AI coding assistants and orchestration state
+.agents/
+.aider*
+.claude/
+.codex/
+.cursor/
+.cursorrules
+.continue/
+.copilot/
+.github/copilot-instructions.md
+.idx/
+.omc/
+.omx/
+.qodo/
+.roo/
+.tabnine/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.windsurf/
